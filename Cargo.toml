@@ -1,0 +1,14 @@
+[package]
+name = "igd-assignment"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4.22"
+qemu-fw-cfg = "0.2.0"
+uefi = { git = "https://github.com/no92/uefi-rs", branch = "pci-io", features = ["logger", "panic_handler", "global_allocator"] }
+uefi-raw = { git = "https://github.com/no92/uefi-rs", branch = "pci-io" }
+zeroize = "1.8.1"
+
+[patch.crates-io]
+uefi-raw = { git = "https://github.com/no92/uefi-rs", branch = "pci-io" }
