@@ -8,6 +8,16 @@ use qemu_fw_cfg::FwCfg;
 use uefi::{boot::{self, EventType, MemoryType, ScopedProtocol, SearchType}, prelude::*, proto::pci::PciIo, Event};
 use zeroize::Zeroize;
 
+const PAGE_SIZE: usize = 0x1000;
+
+const PCI_VENDOR_INTEL: u16 = 0x8086;
+const PCI_CLASS_DISPLAY: u8 = 0x03;
+const PCI_SUBCLASS_VGA_COMPATIBLE: u8 = 0x00;
+const PCI_PROGIF_VGA_CONTROLLER: u8 = 0x00;
+
+const PCI_CFG_ASLS_OFFSET: u32 = 0xFC;
+const PCI_CFG_BDSM_MIRROR_OFFSET: u32 = 0x5C;
+
 static mut PCI_IO_KEY: Option<SearchType<'static>> = None;
 
 fn opregion_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
@@ -26,10 +36,10 @@ fn opregion_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
 		return Status::INVALID_PARAMETER;
 	}
 
-	let pages = opregion.size().div_ceil(0x1000);
+	let pages = opregion.size().div_ceil(PAGE_SIZE);
 	let buf = boot::allocate_pages(boot::AllocateType::MaxAddress(0xFFFFFFFF), MemoryType::ACPI_NON_VOLATILE, pages).unwrap();
 	let buf_slice = unsafe {
-		core::slice::from_raw_parts_mut(buf.as_ptr(), pages * 0x1000)
+		core::slice::from_raw_parts_mut(buf.as_ptr(), pages * PAGE_SIZE)
 	};
 	buf_slice.zeroize();
 
@@ -37,7 +47,7 @@ fn opregion_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
 
 	let addr: usize = buf.addr().into();
 
-	pci_io.pci_write(4, 0xFC, 1, &addr as *const usize as *mut c_void).unwrap();
+	pci_io.pci_write(4, PCI_CFG_ASLS_OFFSET, 1, &addr as *const usize as *mut c_void).unwrap();
 
 	info!("OpRegion @ {:#x} ({} bytes)", addr, opregion.size());
 
@@ -63,18 +73,18 @@ fn stolen_memory_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
 		return Status::INVALID_PARAMETER;
 	}
 
-	if !(bdsm_size % 0x1000 == 0) {
+	if bdsm_size % PAGE_SIZE != 0 {
 		error!("BDSM size {} is not page-aligned!", bdsm_size);
 		return Status::INVALID_PARAMETER;
 	}
 
-	let pages = bdsm_size / 0x1000;
+	let pages = bdsm_size / PAGE_SIZE;
 	// we overallocate 1 MiB - 1 page to ensure our stolen memory range has proper alignment
 	let stolen_memory = boot::allocate_pages(boot::AllocateType::MaxAddress(0xFFFFFFFF),
 		MemoryType::ACPI_NON_VOLATILE, pages + 255).unwrap();
 
 	unsafe {
-		core::slice::from_raw_parts_mut(stolen_memory.as_ptr(), pages * 0x1000).zeroize();
+		core::slice::from_raw_parts_mut(stolen_memory.as_ptr(), pages * PAGE_SIZE).zeroize();
 	}
 
 	// the allocation for stolen memory needs to be aligned to 1 MiB
@@ -82,9 +92,9 @@ fn stolen_memory_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
 	let aligned_mem = unsafe { stolen_memory.add(alignment_needed) };
 	let addr: usize = aligned_mem.addr().into();
 
-	pci_io.pci_write(4, 0x5C, 1, &addr as *const usize as *mut c_void).unwrap();
+	pci_io.pci_write(4, PCI_CFG_BDSM_MIRROR_OFFSET, 1, &addr as *const usize as *mut c_void).unwrap();
 
-	info!("StolenMemory @ {:#x} ({} MiB)", addr, (pages * 0x1000) / 1024 / 1024);
+	info!("StolenMemory @ {:#x} ({} MiB)", addr, (pages * PAGE_SIZE) / 1024 / 1024);
 
 	Status::SUCCESS
 }
@@ -102,14 +112,14 @@ unsafe extern "efiapi" fn notify(_e: Event, _ctx: Option<NonNull<c_void>>) {
 				let mut vendor: [u8; 2] = [0; 2];
 				pci_io.pci_read(2, 0, 1, &mut vendor).expect("PCI configuration space read failed");
 
-				if u16::from_le_bytes(vendor) != 0x8086 {
+				if u16::from_le_bytes(vendor) != PCI_VENDOR_INTEL {
 					continue;
 				}
 
 				let mut classes: [u8; 3] = [0; 3];
 				pci_io.pci_read(1, 9, 3, &mut classes).expect("PCI configuration space read failed");
 
-				if classes[2] != 3 || classes[1] != 0 || classes[0] != 0 {
+				if classes[2] != PCI_CLASS_DISPLAY || classes[1] != PCI_SUBCLASS_VGA_COMPATIBLE || classes[0] != PCI_PROGIF_VGA_CONTROLLER {
 					continue;
 				}
 
