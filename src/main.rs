@@ -12,6 +12,10 @@ use uefi::{boot::{self, EventType, MemoryType, ScopedProtocol, SearchType}, prel
 use zeroize::Zeroize;
 
 const PAGE_SIZE: usize = 0x1000;
+// Stolen Memory should be aligned to 1 MiB
+const STOLEN_MEMORY_ALIGNMENT: usize = 0x100000;
+// number of pages we should overallocate in order to ensure alignment
+const STOLEN_MEMORY_OVERALLOCATION: usize = (STOLEN_MEMORY_ALIGNMENT / PAGE_SIZE) - 1;
 
 const PCI_VENDOR_INTEL: u16 = 0x8086;
 const PCI_CLASS_DISPLAY: u8 = 0x03;
@@ -84,16 +88,33 @@ fn stolen_memory_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
 	let pages = bdsm_size / PAGE_SIZE;
 	// we overallocate 1 MiB - 1 page to ensure our stolen memory range has proper alignment
 	let stolen_memory = boot::allocate_pages(boot::AllocateType::MaxAddress(0xFFFFFFFF),
-		MemoryType::ACPI_NON_VOLATILE, pages + 255).unwrap();
+		MemoryType::ACPI_NON_VOLATILE, pages + STOLEN_MEMORY_OVERALLOCATION).unwrap();
 
 	unsafe {
 		core::slice::from_raw_parts_mut(stolen_memory.as_ptr(), pages * PAGE_SIZE).zeroize();
 	}
 
 	// the allocation for stolen memory needs to be aligned to 1 MiB
-	let alignment_needed = stolen_memory.align_offset(1 * 1024 * 1024);
+	let alignment_needed = stolen_memory.align_offset(STOLEN_MEMORY_ALIGNMENT);
+	let unused_memory_end = (STOLEN_MEMORY_OVERALLOCATION * PAGE_SIZE) - alignment_needed;
 	let aligned_mem = unsafe { stolen_memory.add(alignment_needed) };
 	let addr: usize = aligned_mem.addr().into();
+
+	assert!(alignment_needed + unused_memory_end == (STOLEN_MEMORY_OVERALLOCATION * PAGE_SIZE));
+
+	if alignment_needed > 0 {
+		unsafe {
+			boot::free_pages(stolen_memory, alignment_needed / PAGE_SIZE).unwrap();
+		}
+	}
+
+	if unused_memory_end > 0 {
+		unsafe {
+			// calculate the pointer to the leftover memory at the end
+			let overhang_ptr = stolen_memory.add(alignment_needed).add(pages * PAGE_SIZE);
+			boot::free_pages(overhang_ptr, unused_memory_end / PAGE_SIZE).unwrap();
+		}
+	}
 
 	pci_io.pci_write(4, PCI_CFG_BDSM_MIRROR_OFFSET, 1, &addr as *const usize as *mut c_void).unwrap();
 
