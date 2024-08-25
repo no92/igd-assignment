@@ -2,6 +2,9 @@
 #![no_std]
 #![feature(strict_provenance, let_chains)]
 
+#![deny(warnings)]
+#![allow(clippy::identity_op)]
+
 use core::{ffi::c_void, ptr::NonNull};
 use log::{info, error};
 use qemu_fw_cfg::FwCfg;
@@ -51,7 +54,7 @@ fn opregion_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
 
 	info!("OpRegion @ {:#x} ({} bytes)", addr, opregion.size());
 
-	return Status::SUCCESS;
+	Status::SUCCESS
 }
 
 fn stolen_memory_setup(pci_io: &mut ScopedProtocol<PciIo>) -> Status {
