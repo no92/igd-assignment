@@ -1,0 +1,34 @@
+name: Build
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install UEFI target for Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        target: x86_64-unknown-uefi
+        toolchain: nightly
+    - name: Build
+      run: cargo build --verbose --release
+    - name: Build PCI expansion ROM
+      run: ./scripts/build_rom.py -v 0x8086 -d 0xFFFF -i target/x86_64-unknown-uefi/release/igd-assignment.efi -o igd-assignment.rom
+    - name: Update release
+      if: ${{ github.ref == 'refs/heads/master' }}
+      uses: mini-bomba/create-github-release@v1.1.3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag: "latest"
+        prerelease: true
+        name: "Latest build"
+        files: |
+          igd-assignment.rom
+        body: |
+            Built from commit ${{ env.GIT_HASH }}.
+        clear_attachments: true
