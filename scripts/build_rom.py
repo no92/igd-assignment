@@ -8,6 +8,15 @@ import pathlib
 
 
 class RomHeader(ctypes.Structure):
+    SIGNATURE = 0xAA55
+    EFI_SIGNATURE = 0xEF1
+
+    class Subsystem:
+        EFI_BOOT_SERVICE_DRIVER = 0x0B
+
+    class MachineType:
+        X86_64 = 0x8664
+
     _fields_ = [
         ("signature", ctypes.c_uint16),
         ("initialization_size", ctypes.c_uint16),
@@ -21,14 +30,24 @@ class RomHeader(ctypes.Structure):
     ]
 
     def __init__(self):
-        self.signature = 0xAA55
-        self.efi_signature = 0x0EF1
-        self.efi_subsystem = 0x000B
-        self.efi_machine_type = 0x8664
+        self.signature = self.SIGNATURE
+        self.efi_signature = self.EFI_SIGNATURE
+        self.efi_subsystem = self.Subsystem.EFI_BOOT_SERVICE_DRIVER
+        self.efi_machine_type = self.MachineType.X86_64
         self.pcir_offset = ctypes.sizeof(RomHeader)
 
 
 class PCIR(ctypes.Structure):
+    class Indicator:
+        LAST_IMAGE = 0x80
+
+    class CodeType:
+        EFI_IMAGE = 0x03
+
+    class Revision:
+        PCI_2_2 = 0x00
+        PCI_3_0 = 0x03
+
     _fields_ = [
         ("signature", ctypes.c_uint32),
         ("vendor_id", ctypes.c_uint16),
@@ -46,12 +65,15 @@ class PCIR(ctypes.Structure):
         ("dmtfclp_entry_point_offset", ctypes.c_uint16),
     ]
 
-    def __init__(self):
+    def __init__(self, vendor, device):
         self.signature = int.from_bytes(b"PCIR", byteorder="little")
-        self.indicator = 0x80
-        self.code_type = 0x03
+        self.indicator = self.Indicator.LAST_IMAGE
+        self.code_type = self.CodeType.EFI_IMAGE
         self.length = ctypes.sizeof(PCIR)
-        self.revision = 3
+        self.revision = self.Revision.PCI_3_0
+
+        self.vendor_id = int(vendor)
+        self.device_id = int(device)
 
 
 def write_serialized(struct, output):
@@ -99,9 +121,7 @@ rom_header.initialization_size = output_file_sectors
 
 write_serialized(rom_header, output)
 
-pcir = PCIR()
-pcir.vendor_id = int(args.vendor)
-pcir.device_id = int(args.device)
+pcir = PCIR(args.vendor, args.device)
 pcir.image_length = output_file_sectors
 
 write_serialized(pcir, output)
